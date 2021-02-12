@@ -1,0 +1,121 @@
+---
+title: "Lab 6"
+author: "Meghan Fletcher"
+date: "2/12/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(here)
+library(janitor)
+library(sf)
+library(tmap)
+library(gstat)
+library(stars)
+```
+
+# REad in data:
+```{r}
+ca_dgw <- read_sf(here("ca_dgw"),layer = "F2013_DBGS_Points_20150720_093252") %>% 
+  clean_names()
+
+# look at data more (looks at coordinates, etc.)
+st_crs(ca_dgw)
+
+#  read in ca counties data
+ca_counties <- read_sf(here("ca_counties"), layer = "CA_Counties_TIGER2016") %>% 
+  clean_names() %>% 
+  select(name)
+
+st_crs(ca_counties)
+
+# get the coordinates of the data sets to match
+ca_counties <- st_transform(ca_counties, st_crs(ca_dgw))
+st_crs(ca_counties)
+```
+
+```{r}
+ggplot() +
+  geom_sf(data = ca_counties) +
+  geom_sf(data = ca_dgw, aes(color = dgbs))
+```
+
+```{r}
+tmap_mode("view")
+
+tm_shape(ca_dgw) +
+  tm_dots("dgbs")
+```
+
+```{r}
+sj_county <- ca_counties %>% 
+  filter(name == "San Joaquin")
+
+sj_depth <- ca_dgw %>% 
+  st_intersection(sj_county)
+
+plot(sj_depth)
+plot(sj_county)
+
+
+ggplot() +
+  geom_sf(data = sj_county) +
+  geom_sf(data = sj_depth, aes(color = dgbs))
+```
+
+```{r}
+#to remove duplicates
+well_duplicates <- sj_depth %>% 
+  get_dupes(latitude, longitude)
+
+sj_depth <- sj_depth %>% 
+  filter(!local_well %in% well_duplicates$local_well)
+
+#confirm that duplicates are gone
+sj_depth %>% 
+  get_dupes(latitude, longitude)
+```
+
+
+# Create a variogram
+```{r}
+sj_dgw_vgm <- variogram(dgbs ~ 1, data = sj_depth)
+plot(sj_dgw_vgm)
+
+# find model to fit variogram
+sj_dgw_vgm_fit <- fit.variogram(sj_dgw_vgm, model = vgm(nugget = 20, psill = 3000, 
+                                                        range = 30, model = "Gau"))
+
+sj_dgw_vgm_fit
+
+plot(sj_dgw_vgm, sj_dgw_vgm_fit)
+```
+
+# Spatial Kriging (interpolation)
+```{r}
+# Make a grid that only contains an area that is relevant over SJ county
+sj_grid <- st_bbox(sj_county) %>% 
+  st_as_stars(dx = 0.01, dy = 0.01) %>% 
+  st_set_crs(4326) %>% 
+  st_crop(sj_county)
+
+plot(sj_grid)
+```
+
+```{r}
+sj_dgw_krige <- krige(dgbs ~ 1, sj_depth, sj_grid, model = sj_dgw_vgm_fit)
+
+plot(sj_dgw_krige)
+```
+
+
+
+
+
+
+
+
+
